@@ -1,4 +1,4 @@
-﻿using MSTeamsHistory.Helpers;
+using MSTeamsHistory.Helpers;
 using MSTeamsHistory.Models.Db;
 using MSTeamsHistory.Models.Graph;
 using MSTeamsHistory.Models.Graph.Chats;

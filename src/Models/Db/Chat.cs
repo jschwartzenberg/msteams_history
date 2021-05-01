@@ -1,4 +1,4 @@
-﻿using MSTeamsHistory.Models.Graph;
+using MSTeamsHistory.Models.Graph;
 using MSTeamsHistory.Models.Graph.Members;
 using System;
 using System.Collections.Generic;
