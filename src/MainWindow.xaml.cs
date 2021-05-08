@@ -16,6 +16,9 @@ using System.Windows;
 using System.Windows.Interop;
 using MSTeamsHistory.Helpers;
 using System.Text.RegularExpressions;
+using MSTeamsHistory.ShareGateModels;
+using System.Collections;
+using System.Reflection;
 
 namespace MSTeamsHistory
 {
@@ -172,11 +175,100 @@ namespace MSTeamsHistory
                                 return str;
                             });
                             System.IO.File.WriteAllLines(Path.Combine(chatDirPath, $"{history}.txt"), data);
+
+                            data = x_messages.Select(x =>
+                            {
+                                var text = x.Body.Content;
+                                var str = $"{x.CreatedDateTime?.ToString("yyyy-MM-dd HH:mm:ss")} {text}";
+                                return str;
+                            });
+                            System.IO.File.WriteAllLines(Path.Combine(chatDirPath, $"{history}.tx2"), data);
                     }
+
+                    var shareGateChatDirPath = Path.Combine(chatDirPath, "sharegate");
+                    if (!System.IO.Directory.Exists(shareGateChatDirPath))
+                    {
+                        System.IO.Directory.CreateDirectory(shareGateChatDirPath);
+                    }
+                    var shareGateMessagesPath = Path.Combine(shareGateChatDirPath, "Messages.json");
+                    var sharegate_messages = ConvertToShareGate(x_messages, members);
+                    var sharegate_messagesDotJson = WrapShareGateMessages(sharegate_messages);
+                    var json_string = UnDoDoubleEscaping(JsonConvert.SerializeObject(sharegate_messagesDotJson));
+                    System.IO.File.WriteAllText(shareGateMessagesPath, json_string);
+
+                    var shareGateMessagesDotAspxTemplatePath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "Messages.aspx.template");
+                    var shareGateMessagesDotAspxTemplate = System.IO.File.ReadAllText(shareGateMessagesDotAspxTemplatePath);
+
+                    var shareGateMessagesDotAspxPath = Path.Combine(shareGateChatDirPath, "Messages.aspx");
+                    System.IO.File.WriteAllText(shareGateMessagesDotAspxPath, shareGateMessagesDotAspxTemplate.Replace("####INSERT_JSON_HERE####", json_string));
                 }
                 LogText.Text = "Done.";
             }
         }
+
+        private string UnDoDoubleEscaping(string v)
+        {
+            return v.Replace("\\\\", "\\").Replace("\\\\", "\\\\\\");
+        }
+
+        private List<SgMessagesDotJsonElement> WrapShareGateMessages(List<SgMessage> sharegate_messages) =>
+            sharegate_messages.Select(message =>
+                {
+                    var element = new SgMessagesDotJsonElement();
+                    element.Message = ShareGateEscaped(JsonConvert.SerializeObject(message));
+                    element.Replies = new List<string>();
+                    return element;
+                }
+            ).ToList();
+
+        private string ShareGateEscaped(string v)
+        {
+            return v.Replace("\"", "\\u0022")
+                    .Replace("&", "\\u0026")
+                    .Replace("'", "\\u0027")
+                    .Replace("<", "\\u003c")
+                    .Replace(">", "\\u003e");
+        }
+
+        private List<SgMessage> ConvertToShareGate(List<Message> x_messages, Items<Member> members) =>
+            x_messages.Select(message =>
+                {
+                    var sg_message = new SgMessage();
+                    sg_message.Subject = message.Subject != null ? message.Subject : "";
+
+                    sg_message.Body = new SgMessageBody();
+                    sg_message.Body.ContentType = "html";
+                    var dp = (Newtonsoft.Json.Linq.JObject)message.From.AdditionalData["user"];
+                    sg_message.Body.Content = TransformToShareGateMessageBodyContent(message, (string)dp["displayName"]);
+
+                    sg_message.Attachments = message.Attachments.Select(attachment =>
+                        {
+                            var sg_attachment = new SgAttachment();
+                            sg_attachment.Id = attachment.Id;
+                            sg_attachment.ContentType = attachment.ContentType;
+                            sg_attachment.Content = "querying attachment not implemented";
+                            sg_attachment.Name = attachment.Name;
+                            sg_attachment.ExportedAttachmentContentUrl = "";
+                            return sg_attachment;
+                        }).ToList();
+
+                    sg_message.Mentions = new List<object>();
+                    sg_message.Importance = message.Importance.ToString().ToLower();
+                    return sg_message;
+                }).ToList();
+
+        private string TransformToShareGateMessageBodyContent(Message message, string senderName) =>
+            "<div style=\"display: flex; margin - top: 10px\">"
+                + "<div style=\"flex: none; overflow: hidden; border - radius: 50 %; height: 32px; width: 32px; margin: 0 10px 10px 0\">"
+                //+ "<img src=\"https: //.../Team Message History/General/Messages Attachments/f7cb1bf7-da79-43a0-8ec5-9395b437ae78.png\" width=\"32\" height=\"32\" style=\"vertical-align:top; width:32px; height:32px;\">"
+                + "</div>"
+                + "<div style=\"flex: 1; overflow: hidden;\">"
+                + "<div style=\"font - size:1.2rem; white - space:nowrap; text - overflow:ellipsis; overflow: hidden;\">"
+                + "<span style=\"font - weight:700;\">" + senderName + "</span>"
+                + "<span style=\"margin - left:1rem;\">" + message.CreatedDateTime  + "</span>"
+                + "</div>"
+                + "<div>" + message.Body.Content + "</div>"
+                + "</div>";
 
         /// <summary>
         /// Perform an HTTP GET request to a URL using an HTTP Authorization header
