@@ -92,10 +92,11 @@ namespace MSTeamsHistory
 
             if (authResult != null)
             {
+                TokenHolder tokenHolder = new TokenHolder(app, scopes, firstAccount, authResult);
                 this.SignOutButton.Visibility = Visibility.Visible;
                 LogText.Text = "Loading data ...";
 
-                var me = await LoadItem<User>("https://graph.microsoft.com/beta/me", authResult.AccessToken);
+                var me = await LoadItem<User>("https://graph.microsoft.com/beta/me", tokenHolder);
 
                 var path = HistoryText.Text;
                 var dbPath = Path.Combine(path, authResult.Account.Username); ;
@@ -104,9 +105,16 @@ namespace MSTeamsHistory
                     System.IO.Directory.CreateDirectory(dbPath);
                 }
 
-                var chatsObj = await LoadItems<Models.Graph.Chats.Chat>("https://graph.microsoft.com/beta/me/chats", authResult.AccessToken);
+                var chatsList = new List<Models.Graph.Chats.Chat>();
+                var url = new Uri("https://graph.microsoft.com/beta/me/chats");
+                do
+                {
+                    var chatsObj = await LoadItems<Models.Graph.Chats.Chat>(url.OriginalString, tokenHolder);
+                    url = chatsObj.OdataNextLink;
+                    chatsList.AddRange(chatsObj.Value);
+                } while (url != null);
 
-                System.IO.File.WriteAllText(Path.Combine(dbPath, "chats.json"), JsonConvert.SerializeObject(chatsObj.Value));
+                System.IO.File.WriteAllText(Path.Combine(dbPath, "chats.json"), JsonConvert.SerializeObject(chatsList));
                 var chatsPath = Path.Combine(dbPath, "chats"); ;
                 if (!System.IO.Directory.Exists(chatsPath))
                 {
@@ -115,9 +123,9 @@ namespace MSTeamsHistory
 
 
                 int i = 0;
-                foreach (var chat in chatsObj.Value)
+                foreach (var chat in chatsList)
                 {
-                    LogText.Text = $"Loading messages for chat {++i}/{chatsObj.Value.Count}";
+                    LogText.Text = $"Loading messages for chat {++i}/{chatsList.Count}";
                     var chatDirPath = Path.Combine(chatsPath, chat.Id.SHA1());
                     if (!System.IO.Directory.Exists(chatDirPath))
                     {
@@ -129,13 +137,19 @@ namespace MSTeamsHistory
                     var messagesPath = Path.Combine(chatDirPath, "messages.json");
 
                     var listMessages = new List<Message>();
-                    var messages = await LoadItems<Message>($"https://graph.microsoft.com/beta/me/chats/{chat.Id}/messages", authResult.AccessToken);
+                    var messages = await LoadItems<Message>($"https://graph.microsoft.com/beta/me/chats/{chat.Id}/messages", tokenHolder);
                     if (messages.OdataCount > 0)
                     {
                         listMessages.AddRange(messages.Value);
                         do
                         {
-                            messages = await LoadItems<Message>(messages.OdataNextLink.ToString(), authResult.AccessToken);
+                            var newMessages = await LoadItems<Message>(messages.OdataNextLink.ToString(), tokenHolder);
+                            if (messages.OdataNextLink != null && newMessages.OdataNextLink != null && messages.OdataNextLink.ToString().Equals(newMessages.OdataNextLink.ToString()))
+                            {
+                                LogText.Text = $"MS Graph API loop detected! Affected chat is {chat.Id.SHA1()}.";
+                                break;
+                            }
+                            messages = newMessages;
                             if (messages.OdataCount==0)
                             {
                                 break;
@@ -147,7 +161,7 @@ namespace MSTeamsHistory
                     var x_messages = listMessages.OrderBy(x => x.CreatedDateTime).ToList();
                     System.IO.File.WriteAllText(messagesPath, JsonConvert.SerializeObject(x_messages));
 
-                    var members = await LoadItems<Member>($"https://graph.microsoft.com/beta/me/chats/{chat.Id}/members", authResult.AccessToken);
+                    var members = await LoadItems<Member>($"https://graph.microsoft.com/beta/me/chats/{chat.Id}/members", tokenHolder);
 
                     if (members.Value!=null&&
                         members.Value.Count>0&& x_messages.Count>0)
@@ -190,7 +204,7 @@ namespace MSTeamsHistory
                     }
 
                     var shareGateMessagesPath = Path.Combine(shareGateChatDirPath, "Messages.json");
-                    var sharegate_messages = ConvertToShareGate(x_messages, shareGateChatDirAttachmentsPath, authResult.AccessToken);
+                    var sharegate_messages = ConvertToShareGate(x_messages, shareGateChatDirAttachmentsPath, tokenHolder);
                     var sharegate_messagesDotJson = WrapShareGateMessages(await sharegate_messages);
                     var json_string = UnDoDoubleEscaping(JsonConvert.SerializeObject(sharegate_messagesDotJson));
                     System.IO.File.WriteAllText(shareGateMessagesPath, json_string);
@@ -236,7 +250,7 @@ namespace MSTeamsHistory
                     ;
         }
 
-        private async Task<List<List<SgMessage>>> ConvertToShareGate(List<Message> x_messages, string attachmentsPath, string accessToken)
+        private async Task<List<List<SgMessage>>> ConvertToShareGate(List<Message> x_messages, string attachmentsPath, TokenHolder accessToken)
         {
             var retList = new List<List<SgMessage>>();
             DateTime previousCurrentDay = DateTime.MinValue;
@@ -260,7 +274,7 @@ namespace MSTeamsHistory
             return retList;
         }
 
-        private async Task<SgMessage> ConvertOneMessageToShareGate(Message message, Dictionary<string, string> pictureCache, string attachmentsPath, string accessToken)
+        private async Task<SgMessage> ConvertOneMessageToShareGate(Message message, Dictionary<string, string> pictureCache, string attachmentsPath, TokenHolder accessToken)
         {
             var sg_message = new SgMessage();
             sg_message.Subject = message.Subject != null ? message.Subject : "";
@@ -299,7 +313,7 @@ namespace MSTeamsHistory
             return sg_message;
         }
 
-        private async Task<string> TransformToShareGateMessageBodyContent(Message message, Dictionary<string, string> pictureCache, string attachmentsPath, string accessToken, string attachmentCode) {
+        private async Task<string> TransformToShareGateMessageBodyContent(Message message, Dictionary<string, string> pictureCache, string attachmentsPath, TokenHolder accessToken, string attachmentCode) {
             var sender = (Newtonsoft.Json.Linq.JObject)message.From.AdditionalData["user"];
             if (!pictureCache.Keys.Contains(sender["id"].ToString()))
             {
@@ -332,7 +346,7 @@ namespace MSTeamsHistory
                 + attachmentCode;
         }
 
-        private async Task<string> FetchImages(string content, string attachmentsPath, string messageId, string accessToken)
+        private async Task<string> FetchImages(string content, string attachmentsPath, string messageId, TokenHolder accessToken)
         {
             Regex graphFiles = new Regex(@"https:\/\/graph\.microsoft\.com\/[^\""]+\/\$value");
             MatchCollection urlsToFetch = graphFiles.Matches(content);
@@ -348,7 +362,7 @@ namespace MSTeamsHistory
             return transformedContent;
         }
 
-        private Task<string> TryToFetchPicture(string v, string attachmentsPath, string accessToken)
+        private Task<string> TryToFetchPicture(string v, string attachmentsPath, TokenHolder accessToken)
         {
             return FetchAttachmentWithToken($"https://graph.microsoft.com/beta/users/{v}/photos/48x48", attachmentsPath, v, accessToken);
         }
@@ -359,18 +373,52 @@ namespace MSTeamsHistory
         /// <param name="url">The URL</param>
         /// <param name="token">The token</param>
         /// <returns>String containing the results of the GET operation</returns>
-        public async Task<string> GetHttpContentWithToken(string url, string token)
+        public async Task<string> GetHttpContentWithToken(string url, TokenHolder token)
         {
             var httpClient = new System.Net.Http.HttpClient();
             System.Net.Http.HttpResponseMessage response;
             try
             {
+                int backOffMultiplier = 1;
+            begin:
                 var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, url);
                 //Add the token in Authorization header
-                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token.getToken());
                 response = await httpClient.SendAsync(request);
                 var content = await response.Content.ReadAsStringAsync();
-                return content;
+                if (response.IsSuccessStatusCode)
+                {
+                    return content;
+                }
+                else
+                {
+                    if (response.StatusCode.Equals(System.Net.HttpStatusCode.NotFound))
+                    {
+                        // resource probably belongs to another tenant
+                        return content;
+                    }
+                    if (response.StatusCode.Equals(System.Net.HttpStatusCode.Forbidden))
+                    {
+                        // client id lacks permissions
+                        LogText.Text = "ClientId lacks permission to fetch: " + url;
+                        return content;
+                    }
+                    if (response.StatusCode.Equals(System.Net.HttpStatusCode.Unauthorized))
+                    {
+                        LogText.Text = "Token expired?? Not authorized to fetch: " + url;
+                        token.refreshToken();
+                        goto begin;
+                    }
+                    else
+                    {
+                       LogText.Text = $"Error statuscode: {response.StatusCode} content: {response.Content}" + Environment.NewLine
+                                + $"sleeping for {30*backOffMultiplier}sec..";
+                        Thread.Sleep(backOffMultiplier * 30 * 1000);
+                        LogText.Text = "Continuing...";
+                        backOffMultiplier *= 2;
+                        goto begin;
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -395,22 +443,27 @@ namespace MSTeamsHistory
             }
         }
 
-        public async Task<string> FetchAttachmentWithToken(string url, string attachmentsPath, string filenamePrefix, string token)
+        public async Task<string> FetchAttachmentWithToken(string url, string attachmentsPath, string filenamePrefix, TokenHolder token)
         {
             var httpClient = new System.Net.Http.HttpClient();
             try
             {
                 var fileMetadataStr = await GetHttpContentWithToken(url, token);
-                var obj = JsonConvert.DeserializeObject<Metadata>(fileMetadataStr);
+                Metadata obj = null;
+                if (fileMetadataStr != null)
+                {
+                    obj = JsonConvert.DeserializeObject<Metadata>(fileMetadataStr);
+                }
+                int backOffMultiplier = 1;
             begin:
                 var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, url + "/$value");
                 //Add the token in Authorization header
-                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token.getToken());
                 var response = httpClient.SendAsync(request);
                 if (response.Result.IsSuccessStatusCode)
                 {
                     var content = response.Result.Content.ReadAsByteArrayAsync().Result;
-                    string filenameSuffix = GetFilenameSuffix(response.Result.Content.Headers.ContentType.MediaType, obj.ContentType);
+                    string filenameSuffix = GetFilenameSuffix(response.Result.Content.Headers.ContentType.MediaType, obj);
 
                     System.IO.File.WriteAllBytes(Path.Combine(attachmentsPath, $"{filenamePrefix}{filenameSuffix}"), content);
 
@@ -427,9 +480,15 @@ namespace MSTeamsHistory
                         LogText.Text = "ClientId lacks permission to fetch: " + url;
                         return null;
                     }
-                    LogText.Text = $"Error statuscde: {response.Result.StatusCode} content: {response.Result.Content}" + Environment.NewLine
-                            + "sleeping for the 30sec..";
-                    Thread.Sleep(30 * 1000);
+                    if (response.Result.StatusCode.Equals(System.Net.HttpStatusCode.Unauthorized))
+                    {
+                        token.refreshToken();
+                        goto begin;
+                    }
+                    LogText.Text = $"Error statuscode: {response.Result.StatusCode} content: {response.Result.Content}" + Environment.NewLine
+                            + $"sleeping for {30*backOffMultiplier}sec..";
+                    Thread.Sleep(backOffMultiplier * 30 * 1000);
+                    backOffMultiplier *= 2;
                     goto begin;
                 }
                 return null; // no picture found
@@ -441,7 +500,7 @@ namespace MSTeamsHistory
             }
         }
 
-        private static string GetFilenameSuffix(string contentType, string contentType2)
+        private static string GetFilenameSuffix(string contentType, Metadata contentType2)
         {
             string filenameSuffix;
             if (contentType != null && !contentType.Equals(""))
@@ -450,9 +509,9 @@ namespace MSTeamsHistory
             }
             else
             {
-                if (contentType2 != null && !contentType2.Equals(""))
+                if (contentType2 != null && !contentType2.ContentType.Equals(""))
                 {
-                    filenameSuffix = "." + getExtensionForMimeType(contentType2);
+                    filenameSuffix = "." + getExtensionForMimeType(contentType2.ContentType);
                 }
                 else
                 {
@@ -462,9 +521,10 @@ namespace MSTeamsHistory
             return filenameSuffix;
         }
 
-        public async Task<Items<T>> LoadItems<T>(string url, string token) where T : new()
+        public async Task<Items<T>> LoadItems<T>(string url, TokenHolder token) where T : new()
         {
-            begin:
+            int backOffMultiplier = 1;
+        begin:
             var str = await GetHttpContentWithToken(url,token);
             var obj = JsonConvert.DeserializeObject<Items<T>>(str);
             if (obj.Error!=null)
@@ -472,15 +532,16 @@ namespace MSTeamsHistory
                 if (obj.Error.Code== "TooManyRequests")
                 {
                     LogText.Text = "too many requests to server," + Environment.NewLine
-                        + "sleeping for the 30sec..";
-                    Thread.Sleep(30 * 1000);
+                        + $"sleeping for {30*backOffMultiplier}sec..";
+                    Thread.Sleep(backOffMultiplier * 30 * 1000);
+                    backOffMultiplier *= 2;
                     goto begin;
                 }
             }
             return obj;
         }
 
-        public async Task<T> LoadItem<T>(string url, string token) where T : new()
+        public async Task<T> LoadItem<T>(string url, TokenHolder token) where T : new()
         {
             var str = await GetHttpContentWithToken(url, token);
             var obj = JsonConvert.DeserializeObject<T>(str);
