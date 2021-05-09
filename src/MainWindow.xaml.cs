@@ -175,14 +175,6 @@ namespace MSTeamsHistory
                                 return str;
                             });
                             System.IO.File.WriteAllLines(Path.Combine(chatDirPath, $"{history}.txt"), data);
-
-                            data = x_messages.Select(x =>
-                            {
-                                var text = x.Body.Content;
-                                var str = $"{x.CreatedDateTime?.ToString("yyyy-MM-dd HH:mm:ss")} {text}";
-                                return str;
-                            });
-                            System.IO.File.WriteAllLines(Path.Combine(chatDirPath, $"{history}.tx2"), data);
                     }
 
                     var shareGateChatDirPath = Path.Combine(chatDirPath, "sharegate");
@@ -190,8 +182,15 @@ namespace MSTeamsHistory
                     {
                         System.IO.Directory.CreateDirectory(shareGateChatDirPath);
                     }
+
+                    var shareGateChatDirAttachmentsPath = Path.Combine(shareGateChatDirPath, "Messages Attachments");
+                    if (!System.IO.Directory.Exists(shareGateChatDirAttachmentsPath))
+                    {
+                        System.IO.Directory.CreateDirectory(shareGateChatDirAttachmentsPath);
+                    }
+
                     var shareGateMessagesPath = Path.Combine(shareGateChatDirPath, "Messages.json");
-                    var sharegate_messages = ConvertToShareGate(x_messages, members);
+                    var sharegate_messages = ConvertToShareGate(x_messages, shareGateChatDirAttachmentsPath, authResult.AccessToken);
                     var sharegate_messagesDotJson = WrapShareGateMessages(sharegate_messages);
                     var json_string = UnDoDoubleEscaping(JsonConvert.SerializeObject(sharegate_messagesDotJson));
                     System.IO.File.WriteAllText(shareGateMessagesPath, json_string);
@@ -211,12 +210,16 @@ namespace MSTeamsHistory
             return v.Replace("\\\\", "\\").Replace("\\\\", "\\\\\\");
         }
 
-        private List<SgMessagesDotJsonElement> WrapShareGateMessages(List<SgMessage> sharegate_messages) =>
-            sharegate_messages.Select(message =>
+        private List<SgMessagesDotJsonElement> WrapShareGateMessages(List<List<SgMessage>> sharegate_messages) =>
+            sharegate_messages.Select(messageList =>
                 {
                     var element = new SgMessagesDotJsonElement();
-                    element.Message = ShareGateEscaped(JsonConvert.SerializeObject(message));
-                    element.Replies = new List<string>();
+                    element.Message = ShareGateEscaped(JsonConvert.SerializeObject(messageList.First()));
+                    element.Replies = messageList.Skip(1).Select(message =>
+                        {
+                            return ShareGateEscaped(JsonConvert.SerializeObject(message));
+                        }
+                    ).ToList();
                     return element;
                 }
             ).ToList();
@@ -227,48 +230,107 @@ namespace MSTeamsHistory
                     .Replace("&", "\\u0026")
                     .Replace("'", "\\u0027")
                     .Replace("<", "\\u003c")
-                    .Replace(">", "\\u003e");
+                    .Replace(">", "\\u003e")
+                    .Replace("\\n", "")
+                    .Replace("\t", "  ")
+                    .Replace("\\t", "  ");
         }
 
-        private List<SgMessage> ConvertToShareGate(List<Message> x_messages, Items<Member> members) =>
-            x_messages.Select(message =>
+        private List<List<SgMessage>> ConvertToShareGate(List<Message> x_messages, string attachmentsPath, string accessToken)
+        {
+            var retList = new List<List<SgMessage>>();
+            DateTime previousCurrentDay = DateTime.MinValue;
+            List<SgMessage> currentDayList = null;
+            var pictureCacheIds = new Dictionary<string, bool>();
+            foreach (var message in x_messages)
+            {
+                var messageDay = message.LastModifiedDateTime.Value.DateTime.Date;
+                var newDay = !previousCurrentDay.Equals(messageDay);
+                previousCurrentDay = messageDay;
+
+                var sg_message = ConvertOneMessageToShareGate(message, pictureCacheIds, attachmentsPath, accessToken);
+
+                if (newDay)
                 {
-                    var sg_message = new SgMessage();
-                    sg_message.Subject = message.Subject != null ? message.Subject : "";
+                    currentDayList = new List<SgMessage>();
+                    retList.Add(currentDayList);
+                }
+                currentDayList.Add(sg_message);
+            }
+            return retList;
+        }
 
-                    sg_message.Body = new SgMessageBody();
-                    sg_message.Body.ContentType = "html";
-                    var dp = (Newtonsoft.Json.Linq.JObject)message.From.AdditionalData["user"];
-                    sg_message.Body.Content = TransformToShareGateMessageBodyContent(message, (string)dp["displayName"]);
+        private SgMessage ConvertOneMessageToShareGate(Message message, Dictionary<string, bool> pictureCache, string attachmentsPath, string accessToken)
+        {
+            var sg_message = new SgMessage();
+            sg_message.Subject = message.Subject != null ? message.Subject : "";
 
-                    sg_message.Attachments = message.Attachments.Select(attachment =>
-                        {
-                            var sg_attachment = new SgAttachment();
-                            sg_attachment.Id = attachment.Id;
-                            sg_attachment.ContentType = attachment.ContentType;
-                            sg_attachment.Content = "querying attachment not implemented";
-                            sg_attachment.Name = attachment.Name;
-                            sg_attachment.ExportedAttachmentContentUrl = "";
-                            return sg_attachment;
-                        }).ToList();
+            sg_message.Body = new SgMessageBody();
+            sg_message.Body.ContentType = "html";
 
-                    sg_message.Mentions = new List<object>();
-                    sg_message.Importance = message.Importance.ToString().ToLower();
-                    return sg_message;
-                }).ToList();
+            var attachmentCode = "";
 
-        private string TransformToShareGateMessageBodyContent(Message message, string senderName) =>
-            "<div style=\"display: flex; margin - top: 10px\">"
-                + "<div style=\"flex: none; overflow: hidden; border - radius: 50 %; height: 32px; width: 32px; margin: 0 10px 10px 0\">"
-                //+ "<img src=\"https: //.../Team Message History/General/Messages Attachments/f7cb1bf7-da79-43a0-8ec5-9395b437ae78.png\" width=\"32\" height=\"32\" style=\"vertical-align:top; width:32px; height:32px;\">"
-                + "</div>"
-                + "<div style=\"flex: 1; overflow: hidden;\">"
-                + "<div style=\"font - size:1.2rem; white - space:nowrap; text - overflow:ellipsis; overflow: hidden;\">"
-                + "<span style=\"font - weight:700;\">" + senderName + "</span>"
-                + "<span style=\"margin - left:1rem;\">" + message.CreatedDateTime  + "</span>"
-                + "</div>"
-                + "<div>" + message.Body.Content + "</div>"
-                + "</div>";
+            sg_message.Attachments = message.Attachments.Select(attachment =>
+            {
+                var sg_attachment = new SgAttachment();
+                sg_attachment.Id = attachment.Id;
+                sg_attachment.Content = "querying attachment not implemented";
+                sg_attachment.ContentType = attachment.ContentType;
+                if (attachment.ContentType.Equals("reference"))
+                {
+                    sg_attachment.Content = attachment.AdditionalData["contentUrl"].ToString();
+                    attachmentCode += $"<div>Attachment: <a href=\"{attachment.AdditionalData["contentUrl"].ToString()}\">${attachment.Name} - {attachment.AdditionalData["contentUrl"].ToString()}</a></div>";
+                }
+                if (attachment.ContentType.Equals("application/vnd.microsoft.card.adaptive"))
+                {
+                    sg_attachment.Content = "adaptive card not migrated";
+                    //                    dynamic adaptiveCard = JsonConvert.DeserializeObject(attachment.AdditionalData["content"].ToString());
+                    //                    attachmentCode += $"<div>Attachment: <img src=\"{adaptiveCard.url.ToString()}\" alt=\"{adaptiveCard.altText.ToString()}\" /> </div>";
+                }
+                sg_attachment.Name = attachment.Name;
+                sg_attachment.ExportedAttachmentContentUrl = "";
+                return sg_attachment;
+            }).ToList();
+
+            sg_message.Body.Content = TransformToShareGateMessageBodyContent(message, pictureCache, attachmentsPath, accessToken, attachmentCode);
+
+            sg_message.Mentions = new List<object>();
+            sg_message.Importance = message.Importance.ToString().ToLower();
+            return sg_message;
+        }
+
+        private string TransformToShareGateMessageBodyContent(Message message, Dictionary<string, bool> pictureCache, string attachmentsPath, string accessToken, string attachmentCode) {
+            var sender = (Newtonsoft.Json.Linq.JObject)message.From.AdditionalData["user"];
+            if (!pictureCache.Keys.Contains(sender["id"].ToString()))
+            {
+                pictureCache.Add(sender["id"].ToString(), TryToFetchPicture(sender["id"].ToString(), attachmentsPath, accessToken));
+            }
+            var pictureCode = pictureCache[sender["id"].ToString()] ? $"<img src=\"Messages Attachments/{sender["id"]}.png\" width=\"32\" height=\"32\" style=\"vertical-align:top; width:32px; height:32px;\">" : "";
+            return "<div style=\"display: flex; margin - top: 10px\">"
+                        + "<div style=\"flex: none; overflow: hidden; border - radius: 50 %; height: 32px; width: 32px; margin: 0 10px 10px 0\">"
+                            + pictureCode
+                        + "</div>"
+                        + "<div style=\"flex: 1; overflow: hidden;\">"
+                            + "<div style=\"font - size:1.2rem; white - space:nowrap; text - overflow:ellipsis; overflow: hidden;\">"
+                            + $"<span style=\"font - weight:700;\">{sender["displayName"]}</span>"
+                            + $"<span style=\"margin - left:1rem;\">{message.CreatedDateTime}</span>"
+                            + "</div>"
+                            + $"<div>{message.Body.Content}</div>"
+                        + "</div>"
+                  + "</div>"
+                + attachmentCode;
+        }
+
+        private bool TryToFetchPicture(string v, string attachmentsPath, string accessToken)
+        {
+            var profilePicture = GetHttpBinaryContentWithToken($"https://graph.microsoft.com/beta/users/{v}/photos/48x48/$value", accessToken);
+            if (profilePicture.Result != null)
+            {
+                System.IO.File.WriteAllBytes(Path.Combine(attachmentsPath, $"{v}.png"), profilePicture.Result);
+                return true;
+            }
+            return false;
+        }
 
         /// <summary>
         /// Perform an HTTP GET request to a URL using an HTTP Authorization header
@@ -292,6 +354,35 @@ namespace MSTeamsHistory
             catch (Exception ex)
             {
                 return ex.ToString();
+            }
+        }
+
+        /// <summary>
+        /// Perform an HTTP GET request to a URL using an HTTP Authorization header
+        /// </summary>
+        /// <param name="url">The URL</param>
+        /// <param name="token">The token</param>
+        /// <returns>String containing the results of the GET operation</returns>
+        public async Task<byte[]> GetHttpBinaryContentWithToken(string url, string token)
+        {
+            var httpClient = new System.Net.Http.HttpClient();
+            //System.Net.Http.HttpResponseMessage response;
+            try
+            {
+                var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, url);
+                //Add the token in Authorization header
+                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                var response = httpClient.SendAsync(request);
+                if (response.Result.IsSuccessStatusCode)
+                {
+                    var content = await response.Result.Content.ReadAsByteArrayAsync();
+                    return content;
+                }
+                return null; // no picture found
+            }
+            catch (Exception ex)
+            {
+                return null; // probably no profile picture was found
             }
         }
 
