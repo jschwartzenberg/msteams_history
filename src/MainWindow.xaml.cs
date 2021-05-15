@@ -191,7 +191,7 @@ namespace MSTeamsHistory
 
                     var shareGateMessagesPath = Path.Combine(shareGateChatDirPath, "Messages.json");
                     var sharegate_messages = ConvertToShareGate(x_messages, shareGateChatDirAttachmentsPath, authResult.AccessToken);
-                    var sharegate_messagesDotJson = WrapShareGateMessages(sharegate_messages);
+                    var sharegate_messagesDotJson = WrapShareGateMessages(await sharegate_messages);
                     var json_string = UnDoDoubleEscaping(JsonConvert.SerializeObject(sharegate_messagesDotJson));
                     System.IO.File.WriteAllText(shareGateMessagesPath, json_string);
 
@@ -207,7 +207,8 @@ namespace MSTeamsHistory
 
         private string UnDoDoubleEscaping(string v)
         {
-            return v.Replace("\\\\", "\\").Replace("\\\\", "\\\\\\");
+            return v;
+            //return v.Replace("\\\\", "\\").Replace("\\\\", "\\\\\\");
         }
 
         private List<SgMessagesDotJsonElement> WrapShareGateMessages(List<List<SgMessage>> sharegate_messages) =>
@@ -231,17 +232,21 @@ namespace MSTeamsHistory
                     .Replace("'", "\\u0027")
                     .Replace("<", "\\u003c")
                     .Replace(">", "\\u003e")
-                    .Replace("\\n", "")
-                    .Replace("\t", "  ")
-                    .Replace("\\t", "  ");
+                    .Replace("\n", "\\000a")
+                    .Replace(@"\\n", "\\000a")
+                    .Replace("\r", "\\000d")
+                    .Replace(@"\\r", "\\000d")
+                    .Replace("\t", "\\0009")
+                    .Replace(@"\\t", "\\0009")
+                    ;
         }
 
-        private List<List<SgMessage>> ConvertToShareGate(List<Message> x_messages, string attachmentsPath, string accessToken)
+        private async Task<List<List<SgMessage>>> ConvertToShareGate(List<Message> x_messages, string attachmentsPath, string accessToken)
         {
             var retList = new List<List<SgMessage>>();
             DateTime previousCurrentDay = DateTime.MinValue;
             List<SgMessage> currentDayList = null;
-            var pictureCacheIds = new Dictionary<string, bool>();
+            var pictureCacheIds = new Dictionary<string, string>();
             foreach (var message in x_messages)
             {
                 var messageDay = message.LastModifiedDateTime.Value.DateTime.Date;
@@ -255,12 +260,12 @@ namespace MSTeamsHistory
                     currentDayList = new List<SgMessage>();
                     retList.Add(currentDayList);
                 }
-                currentDayList.Add(sg_message);
+                currentDayList.Add(await sg_message);
             }
             return retList;
         }
 
-        private SgMessage ConvertOneMessageToShareGate(Message message, Dictionary<string, bool> pictureCache, string attachmentsPath, string accessToken)
+        private async Task<SgMessage> ConvertOneMessageToShareGate(Message message, Dictionary<string, string> pictureCache, string attachmentsPath, string accessToken)
         {
             var sg_message = new SgMessage();
             sg_message.Subject = message.Subject != null ? message.Subject : "";
@@ -292,20 +297,33 @@ namespace MSTeamsHistory
                 return sg_attachment;
             }).ToList();
 
-            sg_message.Body.Content = TransformToShareGateMessageBodyContent(message, pictureCache, attachmentsPath, accessToken, attachmentCode);
+            sg_message.Body.Content = await TransformToShareGateMessageBodyContent(message, pictureCache, attachmentsPath, accessToken, attachmentCode);
 
             sg_message.Mentions = new List<object>();
             sg_message.Importance = message.Importance.ToString().ToLower();
             return sg_message;
         }
 
-        private string TransformToShareGateMessageBodyContent(Message message, Dictionary<string, bool> pictureCache, string attachmentsPath, string accessToken, string attachmentCode) {
+        private async Task<string> TransformToShareGateMessageBodyContent(Message message, Dictionary<string, string> pictureCache, string attachmentsPath, string accessToken, string attachmentCode) {
             var sender = (Newtonsoft.Json.Linq.JObject)message.From.AdditionalData["user"];
             if (!pictureCache.Keys.Contains(sender["id"].ToString()))
             {
-                pictureCache.Add(sender["id"].ToString(), TryToFetchPicture(sender["id"].ToString(), attachmentsPath, accessToken));
+                pictureCache.Add(sender["id"].ToString(), await TryToFetchPicture(sender["id"].ToString(), attachmentsPath, accessToken));
             }
-            var pictureCode = pictureCache[sender["id"].ToString()] ? $"<img src=\"Messages Attachments/{sender["id"]}.png\" width=\"32\" height=\"32\" style=\"vertical-align:top; width:32px; height:32px;\">" : "";
+
+            string pictureFilename = pictureCache[sender["id"].ToString()];
+            var pictureCode = pictureFilename != null ? $"<img src=\"Messages Attachments/{pictureFilename}\" width=\"32\" height=\"32\" style=\"vertical-align:top; width:32px; height:32px;\">" : "";
+            string messageBody;
+            if (message.Body.ContentType.ToString().Equals("Html"))
+            {
+                messageBody = await FetchImages(message.Body.Content, attachmentsPath, message.Id, accessToken);
+//                messageBody = messageBody.Replace("\n", @"\n")
+//                                         .Replace("\t", @"\t");
+            }
+            else
+            {
+                messageBody = message.Body.Content;
+            }
             return "<div style=\"display: flex; margin - top: 10px\">"
                         + "<div style=\"flex: none; overflow: hidden; border - radius: 50 %; height: 32px; width: 32px; margin: 0 10px 10px 0\">"
                             + pictureCode
@@ -315,21 +333,31 @@ namespace MSTeamsHistory
                             + $"<span style=\"font - weight:700;\">{sender["displayName"]}</span>"
                             + $"<span style=\"margin - left:1rem;\">{message.CreatedDateTime}</span>"
                             + "</div>"
-                            + $"<div>{message.Body.Content}</div>"
+                            + $"<div>{messageBody}</div>"
                         + "</div>"
                   + "</div>"
                 + attachmentCode;
         }
 
-        private bool TryToFetchPicture(string v, string attachmentsPath, string accessToken)
+        private async Task<string> FetchImages(string content, string attachmentsPath, string messageId, string accessToken)
         {
-            var profilePicture = GetHttpBinaryContentWithToken($"https://graph.microsoft.com/beta/users/{v}/photos/48x48/$value", accessToken);
-            if (profilePicture.Result != null)
+            Regex graphFiles = new Regex(@"https:\/\/graph\.microsoft\.com\/[^\""]+\/\$value");
+            MatchCollection urlsToFetch = graphFiles.Matches(content);
+            string transformedContent = content;
+            for (int count = 0; count < urlsToFetch.Count; count++)
             {
-                System.IO.File.WriteAllBytes(Path.Combine(attachmentsPath, $"{v}.png"), profilePicture.Result);
-                return true;
+                var graphUrl = urlsToFetch[count].Value;
+                var attachmentFileNamePrefix = messageId + "_" + count;
+                var inlineMessageAttachmentFilename = await FetchAttachmentWithToken(graphUrl.Replace("/$value", ""), attachmentsPath, attachmentFileNamePrefix, accessToken);
+
+                transformedContent = transformedContent.Replace(graphUrl, $"Messages Attachments/{inlineMessageAttachmentFilename}");
             }
-            return false;
+            return transformedContent;
+        }
+
+        private Task<string> TryToFetchPicture(string v, string attachmentsPath, string accessToken)
+        {
+            return FetchAttachmentWithToken($"https://graph.microsoft.com/beta/users/{v}/photos/48x48", attachmentsPath, v, accessToken);
         }
 
         /// <summary>
@@ -353,37 +381,92 @@ namespace MSTeamsHistory
             }
             catch (Exception ex)
             {
+                LogText.Text = ex.ToString();
                 return ex.ToString();
             }
         }
 
-        /// <summary>
-        /// Perform an HTTP GET request to a URL using an HTTP Authorization header
-        /// </summary>
-        /// <param name="url">The URL</param>
-        /// <param name="token">The token</param>
-        /// <returns>String containing the results of the GET operation</returns>
-        public async Task<byte[]> GetHttpBinaryContentWithToken(string url, string token)
+        public static string getExtensionForMimeType(string mimeType)
+        {
+            switch(mimeType)
+            {
+                case "image/jpeg":
+                    return "jpeg";
+                case "image/png":
+                    return "png";
+                case "image/gif":
+                    return "gif";
+                default:
+                    var slashIndex = mimeType.IndexOf("/");
+                    return mimeType.Substring(slashIndex + 1);
+            }
+        }
+
+        public async Task<string> FetchAttachmentWithToken(string url, string attachmentsPath, string filenamePrefix, string token)
         {
             var httpClient = new System.Net.Http.HttpClient();
-            //System.Net.Http.HttpResponseMessage response;
             try
             {
-                var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, url);
+                var fileMetadataStr = await GetHttpContentWithToken(url, token);
+                var obj = JsonConvert.DeserializeObject<Metadata>(fileMetadataStr);
+            begin:
+                var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, url + "/$value");
                 //Add the token in Authorization header
                 request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
                 var response = httpClient.SendAsync(request);
                 if (response.Result.IsSuccessStatusCode)
                 {
-                    var content = await response.Result.Content.ReadAsByteArrayAsync();
-                    return content;
+                    var content = response.Result.Content.ReadAsByteArrayAsync().Result;
+                    string filenameSuffix = GetFilenameSuffix(response.Result.Content.Headers.ContentType.MediaType, obj.ContentType);
+
+                    System.IO.File.WriteAllBytes(Path.Combine(attachmentsPath, $"{filenamePrefix}{filenameSuffix}"), content);
+
+                    return $"{filenamePrefix}{filenameSuffix}";
+                }
+                else
+                {
+                    if (response.Result.StatusCode.Equals(System.Net.HttpStatusCode.NotFound))
+                    {
+                        return null;
+                    }
+                    if (fileMetadataStr.Contains("ErrorInsufficientPermissionsInAccessToken"))
+                    {
+                        LogText.Text = "ClientId lacks permission to fetch: " + url;
+                        return null;
+                    }
+                    LogText.Text = $"Error statuscde: {response.Result.StatusCode} content: {response.Result.Content}" + Environment.NewLine
+                            + "sleeping for the 30sec..";
+                    Thread.Sleep(30 * 1000);
+                    goto begin;
                 }
                 return null; // no picture found
             }
             catch (Exception ex)
             {
+                LogText.Text = ex.ToString();
                 return null; // probably no profile picture was found
             }
+        }
+
+        private static string GetFilenameSuffix(string contentType, string contentType2)
+        {
+            string filenameSuffix;
+            if (contentType != null && !contentType.Equals(""))
+            {
+                filenameSuffix = "." + getExtensionForMimeType(contentType);
+            }
+            else
+            {
+                if (contentType2 != null && !contentType2.Equals(""))
+                {
+                    filenameSuffix = "." + getExtensionForMimeType(contentType2);
+                }
+                else
+                {
+                    filenameSuffix = "";
+                }
+            }
+            return filenameSuffix;
         }
 
         public async Task<Items<T>> LoadItems<T>(string url, string token) where T : new()

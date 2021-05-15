@@ -67,6 +67,7 @@
     <Compile Include="Models\Graph\Error\InnerError.cs" />
     <Compile Include="Models\Graph\Items.cs" />
     <Compile Include="Models\Graph\Members\Member.cs" />
+    <Compile Include="Models\Graph\Metadata.cs" />
     <Compile Include="ShareGateModels\SgAttachment.cs" />
     <Compile Include="ShareGateModels\SgMessage.cs" />
     <Compile Include="ShareGateModels\SgMessageBody.cs" />

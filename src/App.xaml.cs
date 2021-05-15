@@ -25,11 +25,13 @@ namespace MSTeamsHistory
         //   - for any Work or School accounts, or Microsoft personal account, use common
         //   - for Microsoft Personal account, use consumers
         private static string ClientId = "8f190bac-1f84-48e9-b981-efdea3a1a6b0";
+        //private static string ClientId = "7c6d83df-d229-494b-8259-ed191b9fd479";
         // "0b8b0665-bc13-4fdc-bd72-e0227b9fc011";
 
         // Note: Tenant is important for the quickstart. We'd need to check with Andre/Portal if we
         // want to change to the AadAuthorityAudience.
         private static string Tenant = "common";
+        //private static string Tenant = "luxoft.com";
 
         private static IPublicClientApplication _clientApp ;
 
