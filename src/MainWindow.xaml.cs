@@ -32,7 +32,8 @@ namespace MSTeamsHistory
         //Set the scope for API call to user.read
         string[] scopes = new string[] { 
             "user.read", 
-            "Chat.Read"
+            "Chat.Read",
+            "User.ReadBasic.All"
         };
 
 
@@ -314,13 +315,13 @@ namespace MSTeamsHistory
         }
 
         private async Task<string> TransformToShareGateMessageBodyContent(Message message, Dictionary<string, string> pictureCache, string attachmentsPath, TokenHolder accessToken, string attachmentCode) {
-            var sender = (Newtonsoft.Json.Linq.JObject)message.From.AdditionalData["user"];
-            if (!pictureCache.Keys.Contains(sender["id"].ToString()))
+            var sender = (Newtonsoft.Json.Linq.JObject)message.From.AdditionalData["user"]; // null for bots
+            if (sender != null && !pictureCache.Keys.Contains(sender["id"].ToString()))
             {
                 pictureCache.Add(sender["id"].ToString(), await TryToFetchPicture(sender["id"].ToString(), attachmentsPath, accessToken));
             }
 
-            string pictureFilename = pictureCache[sender["id"].ToString()];
+            string pictureFilename = sender != null ? pictureCache[sender["id"].ToString()] : null;
             var pictureCode = pictureFilename != null ? $"<img src=\"Messages Attachments/{pictureFilename}\" width=\"32\" height=\"32\" style=\"vertical-align:top; width:32px; height:32px;\">" : "";
             string messageBody;
             if (message.Body.ContentType.ToString().Equals("Html"))
@@ -331,13 +332,14 @@ namespace MSTeamsHistory
             {
                 messageBody = message.Body.Content;
             }
+            string senderDisplayName = sender != null ? sender["displayName"].ToString() : "exporter encountered unsupported sender (probably a bot?)";
             return "<div style=\"display: flex; margin-top: 10px\">"
                         + "<div style=\"flex: none; overflow: hidden; border-radius: 50%; height: 32px; width: 32px; margin: 0 10px 10px 0\">"
                             + pictureCode
                         + "</div>"
                         + "<div style=\"flex: 1; overflow: hidden;\">"
                             + "<div style=\"font-size:1.2rem; white-space:nowrap; text-overflow:ellipsis; overflow: hidden;\">"
-                            + $"<span style=\"font-weight:700;\">{sender["displayName"]}</span>"
+                            + $"<span style=\"font-weight:700;\">{senderDisplayName}</span>"
                             + $"<span style=\"margin-left:1rem;\">{message.CreatedDateTime}</span>"
                             + "</div>"
                             + $"<div>{messageBody}</div>"
