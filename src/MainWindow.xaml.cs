@@ -318,7 +318,7 @@ namespace MSTeamsHistory
                 messageBody = message.Body.Content;
             }
             return "<div style=\"display: flex; margin-top: 10px\">"
-                        + "<div style=\"flex: none; overflow: hidden; border-radius: 50 %; height: 32px; width: 32px; margin: 0 10px 10px 0\">"
+                        + "<div style=\"flex: none; overflow: hidden; border-radius: 50%; height: 32px; width: 32px; margin: 0 10px 10px 0\">"
                             + pictureCode
                         + "</div>"
                         + "<div style=\"flex: 1; overflow: hidden;\">"
