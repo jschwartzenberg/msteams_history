@@ -207,8 +207,7 @@ namespace MSTeamsHistory
 
         private string UnDoDoubleEscaping(string v)
         {
-            return v;
-            //return v.Replace("\\\\", "\\").Replace("\\\\", "\\\\\\");
+            return v.Replace("\\\\", "\\").Replace("\\\\", "\\\\\\");
         }
 
         private List<SgMessagesDotJsonElement> WrapShareGateMessages(List<List<SgMessage>> sharegate_messages) =>
@@ -232,12 +231,8 @@ namespace MSTeamsHistory
                     .Replace("'", "\\u0027")
                     .Replace("<", "\\u003c")
                     .Replace(">", "\\u003e")
-                    .Replace("\n", "\\000a")
-                    .Replace(@"\\n", "\\000a")
-                    .Replace("\r", "\\000d")
-                    .Replace(@"\\r", "\\000d")
-                    .Replace("\t", "\\0009")
-                    .Replace(@"\\t", "\\0009")
+                    .Replace(@"\n", "\\u005c\\u006e")
+                    .Replace(@"\t", "\\u005c\\u0074")
                     ;
         }
 
@@ -316,22 +311,20 @@ namespace MSTeamsHistory
             string messageBody;
             if (message.Body.ContentType.ToString().Equals("Html"))
             {
-                messageBody = await FetchImages(message.Body.Content, attachmentsPath, message.Id, accessToken);
-//                messageBody = messageBody.Replace("\n", @"\n")
-//                                         .Replace("\t", @"\t");
+                messageBody = await FetchImages(message.Body.Content, attachmentsPath, message.Id, accessToken);;
             }
             else
             {
                 messageBody = message.Body.Content;
             }
-            return "<div style=\"display: flex; margin - top: 10px\">"
-                        + "<div style=\"flex: none; overflow: hidden; border - radius: 50 %; height: 32px; width: 32px; margin: 0 10px 10px 0\">"
+            return "<div style=\"display: flex; margin-top: 10px\">"
+                        + "<div style=\"flex: none; overflow: hidden; border-radius: 50 %; height: 32px; width: 32px; margin: 0 10px 10px 0\">"
                             + pictureCode
                         + "</div>"
                         + "<div style=\"flex: 1; overflow: hidden;\">"
-                            + "<div style=\"font - size:1.2rem; white - space:nowrap; text - overflow:ellipsis; overflow: hidden;\">"
-                            + $"<span style=\"font - weight:700;\">{sender["displayName"]}</span>"
-                            + $"<span style=\"margin - left:1rem;\">{message.CreatedDateTime}</span>"
+                            + "<div style=\"font-size:1.2rem; white-space:nowrap; text-overflow:ellipsis; overflow: hidden;\">"
+                            + $"<span style=\"font-weight:700;\">{sender["displayName"]}</span>"
+                            + $"<span style=\"margin-left:1rem;\">{message.CreatedDateTime}</span>"
                             + "</div>"
                             + $"<div>{messageBody}</div>"
                         + "</div>"
