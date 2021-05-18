@@ -13,14 +13,14 @@ namespace MSTeamsHistory
         private AuthenticationResult authResult = null;
         private IPublicClientApplication app;
         private readonly string[] scopes;
-        private readonly IAccount firstAccount;
+        private readonly IAccount account;
 
-        public TokenHolder(IPublicClientApplication app, string[] scopes, IAccount firstAccount, AuthenticationResult firstAuthResult)
+        public TokenHolder(IPublicClientApplication app, string[] scopes, AuthenticationResult authResult)
         {
             this.app = app;
             this.scopes = scopes;
-            this.firstAccount = firstAccount;
-            this.authResult = firstAuthResult;
+            this.account = authResult.Account;
+            this.authResult = authResult;
         }
 
         public string getToken()
@@ -33,7 +33,7 @@ namespace MSTeamsHistory
                 }
                 else
                 {
-                    authResult = app.AcquireTokenSilent(scopes, firstAccount).ExecuteAsync().Result;
+                    authResult = app.AcquireTokenSilent(scopes, account).ExecuteAsync().Result;
                     return authResult.AccessToken;
                 }
             }
@@ -43,7 +43,7 @@ namespace MSTeamsHistory
         {
             lock (authResult)
             {
-                authResult = app.AcquireTokenSilent(scopes, firstAccount).ExecuteAsync().Result;
+                authResult = app.AcquireTokenSilent(scopes, account).ExecuteAsync().Result;
             }
         }
     }

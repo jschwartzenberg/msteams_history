@@ -93,7 +93,7 @@ namespace MSTeamsHistory
 
             if (authResult != null)
             {
-                TokenHolder tokenHolder = new TokenHolder(app, scopes, firstAccount, authResult);
+                TokenHolder tokenHolder = new TokenHolder(app, scopes, authResult);
                 this.SignOutButton.Visibility = Visibility.Visible;
                 LogText.Text = "Loading data ...";
 
@@ -308,7 +308,6 @@ namespace MSTeamsHistory
             }).ToList();
 
             sg_message.Body.Content = await TransformToShareGateMessageBodyContent(message, pictureCache, attachmentsPath, accessToken, attachmentCode);
-
             sg_message.Mentions = new List<object>();
             sg_message.Importance = message.Importance.ToString().ToLower();
             return sg_message;
@@ -316,12 +315,12 @@ namespace MSTeamsHistory
 
         private async Task<string> TransformToShareGateMessageBodyContent(Message message, Dictionary<string, string> pictureCache, string attachmentsPath, TokenHolder accessToken, string attachmentCode) {
             var sender = (Newtonsoft.Json.Linq.JObject)message.From.AdditionalData["user"]; // null for bots
-            if (sender != null && !pictureCache.Keys.Contains(sender["id"].ToString()))
+            if (sender != null && sender.ToString().Contains("userIdentityType") && sender["userIdentityType"].ToString().Equals("aadUser") && !pictureCache.Keys.Contains(sender["id"].ToString()))
             {
                 pictureCache.Add(sender["id"].ToString(), await TryToFetchPicture(sender["id"].ToString(), attachmentsPath, accessToken));
             }
 
-            string pictureFilename = sender != null ? pictureCache[sender["id"].ToString()] : null;
+            string pictureFilename = sender != null && sender["userIdentityType"].ToString().Equals("aadUser") ? pictureCache[sender["id"].ToString()] : null;
             var pictureCode = pictureFilename != null ? $"<img src=\"Messages Attachments/{pictureFilename}\" width=\"32\" height=\"32\" style=\"vertical-align:top; width:32px; height:32px;\">" : "";
             string messageBody;
             if (message.Body.ContentType.ToString().Equals("Html"))
