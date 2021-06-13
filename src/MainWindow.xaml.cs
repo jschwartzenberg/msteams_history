@@ -314,7 +314,10 @@ namespace MSTeamsHistory
         }
 
         private async Task<string> TransformToShareGateMessageBodyContent(Message message, Dictionary<string, string> pictureCache, string attachmentsPath, TokenHolder accessToken, string attachmentCode) {
-            var sender = (Newtonsoft.Json.Linq.JObject)message.From.AdditionalData["user"]; // null for bots
+            /*
+             * message.From seems null for system messages, message.From.AdditionalData["user"] seems null for bots
+             */
+            var sender = message.From != null ? (Newtonsoft.Json.Linq.JObject)message.From.AdditionalData["user"] : null;
             if (sender != null && sender.ToString().Contains("userIdentityType") && sender["userIdentityType"].ToString().Equals("aadUser") && !pictureCache.Keys.Contains(sender["id"].ToString()))
             {
                 pictureCache.Add(sender["id"].ToString(), await TryToFetchPicture(sender["id"].ToString(), attachmentsPath, accessToken));
@@ -485,6 +488,11 @@ namespace MSTeamsHistory
                     {
                         token.refreshToken();
                         goto begin;
+                    }
+                    if (response.Result.StatusCode.Equals(System.Net.HttpStatusCode.Forbidden))
+                    {
+                        LogText.Text = "Forbidden to fetch attachment: " + url;
+                        return null;
                     }
                     LogText.Text = $"Error statuscode: {response.Result.StatusCode} content: {response.Result.Content}" + Environment.NewLine
                             + $"sleeping for {30*backOffMultiplier}sec..";
